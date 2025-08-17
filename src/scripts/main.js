@@ -8,7 +8,7 @@ import Renderer from './renderer';
 import AudioPlayer from './audio-player';
 import PoseController from './pose-controller';
 
-// 🔊 importăm Tone.js ca să putem debloca AudioContext
+// Import Tone.js ca să putem debloca AudioContext
 import Tone from 'tone';
 
 import config from '../config.js';
@@ -59,20 +59,23 @@ class App {
       start: this.start.bind(this)
     });
 
-    // === 1) Deblochează AudioContext pe primul gest (click/tap) ===
+    // === 1) Deblochează AudioContext pe primul gest (click/tap/keypress) ===
     const unlockAudio = async () => {
       try {
         if (Tone && Tone.context && Tone.context.state !== 'running') {
           await Tone.context.resume();
-          // unele browsere vechi mai cer și un mic “ping”
+          // atinge ușor transportul pe unele browsere vechi
           if (Tone.Transport && Tone.Transport.state !== 'started') {
-            // nu pornim transportul, doar îl atingem
-            Tone.Transport.seconds = Tone.Transport.seconds; // no-op touch
+            // no-op touch
+            Tone.Transport.seconds = Tone.Transport.seconds;
           }
           console.log('[Semi-Conductor] AudioContext resumed.');
         }
       } catch (e) {
-        console.warn('[Semi-Conductor] AudioContext resume failed:', e?.message || e);
+        console.warn(
+          '[Semi-Conductor] AudioContext resume failed:',
+          (e && e.message) ? e.message : e
+        );
       }
     };
     window.addEventListener('pointerdown', unlockAudio, { capture: true, once: false });
@@ -82,13 +85,12 @@ class App {
     this._preflightCamera();
     window.addEventListener('pointerdown', () => this._preflightCamera(), { once: true });
 
-    // === 3) Watchdog: dacă “loading” stă prea mult, împinge progresul ===
-    // (nu sare peste încărcarea reală; doar împinge UI-ul dacă s-a blocat din permisiuni)
+    // === 3) Watchdog: dacă “loading” stă prea mult, împinge progresul UI ===
     setTimeout(() => {
       if (!this.state.loaded && this.state.percentageLoaded < 60) {
         console.warn('[Semi-Conductor] Loading watchdog: pushing progress...');
-        this.setGraphicsLoaded();          // ca și cum grafica ar fi gata
-        this.setInstrumentsLoaded(80);     // împingem un prag sigur
+        this.setGraphicsLoaded();      // marchează grafica drept “gata”
+        this.setInstrumentsLoaded(80); // și instrumentele la un prag sigur
       }
     }, 5000);
   }
@@ -100,28 +102,30 @@ class App {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       this._cameraPrefetched = true;
-      stream.getTracks().forEach(t => t.stop());
+      // oprim imediat — doar voiam permisiunea
+      stream.getTracks().forEach(function (t) { t.stop(); });
       console.log('[Semi-Conductor] Camera permission granted (preflight).');
     } catch (err) {
-      console.warn('[Semi-Conductor] Camera preflight failed:', err && err.name);
+      console.warn(
+        '[Semi-Conductor] Camera preflight failed:',
+        (err && err.name) ? err.name : err
+      );
     }
   }
 
-  /* Called with percentage each time instrument samples loaded */
+  // ===== Progres încărcare =====
   setInstrumentsLoaded(percentage) {
     this.state.percentageLoaded = percentage;
     this.setLoadProgress();
   }
 
-  /* Called once when graphics loaded */
   setGraphicsLoaded() {
     this.state.graphicsLoaded = true;
     this.setLoadProgress();
   }
 
-  /* Combines load progress of both graphics & samples to make sure app is fully loaded before starting */
   setLoadProgress() {
-    let percentage;
+    var percentage;
     if (!this.state.graphicsLoaded) {
       percentage = this.state.percentageLoaded - 20;
     } else {
@@ -160,10 +164,10 @@ class App {
   }
 
   async startCalibration() {
+    // asigură camera + audio unlock înainte de init
     await this._preflightCamera();
-    // asigură-te că audio e “running” când userul apasă Start
     if (Tone && Tone.context && Tone.context.state !== 'running') {
-      try { await Tone.context.resume(); } catch (_) {}
+      try { await Tone.context.resume(); } catch (e) {}
     }
     if (!this.poseController.initialized) await this.poseController.initialize();
   }
