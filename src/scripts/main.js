@@ -1,188 +1,100 @@
-/*
-Copyright 2019 Google LLC
-Licensed under the Apache License, Version 2.0
-*/
-import 'babel-polyfill';
+import * as posenet from '@tensorflow-models/posenet';
+import Stats from 'stats.js';
+import dom from './dom';
+import orchestra from './orchestra';
 
-import Renderer from './renderer';
-import AudioPlayer from './audio-player';
-import PoseController from './pose-controller';
-import Tone from 'tone';
+const stats = new Stats();
+stats.showPanel(0);
+document.body.appendChild(stats.dom);
 
-import config from '../config.js';
-import song from '../assets/song.json';
-import samples from '../assets/samples.json';
+let net;
+let video;
+let rafId;
 
-class App {
-  constructor(config) {
-    this.config = config;
+async function setupCamera() {
+  video = document.getElementById('video');
+  if (!video) {
+    video = document.createElement('video');
+    video.id = 'video';
+    video.width = 600;
+    video.height = 500;
+    video.autoplay = true;
+    video.playsInline = true;
+    document.body.appendChild(video);
+  }
 
-    this.state = {
-      loaded: false,
-      percentageLoaded: 0,
-      calibrating: true,
-      conducting: false,
-      stopped: false,
-      finished: false,
-      graphicsLoaded: false
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      facingMode: 'user',
+      width: 600,
+      height: 500
+    }
+  });
+
+  video.srcObject = stream;
+
+  return new Promise((resolve) => {
+    video.onloadedmetadata = () => {
+      resolve(video);
     };
-
-    this._cameraPrefetched = false;
-
-    this.renderer = new Renderer({
-      state: this.state,
-      songTitle: song.header.name,
-      startCalibration: this.startCalibration.bind(this),
-      restart: this.restart.bind(this),
-      setGraphicsLoaded: this.setGraphicsLoaded.bind(this)
-    });
-
-    this.audioPlayer = new AudioPlayer({
-      song: song,
-      samples: samples,
-      setInstrumentsLoaded: this.setInstrumentsLoaded.bind(this),
-      setSongProgress: this.setSongProgress.bind(this),
-      triggerAnimation: this.renderer.triggerAnimation.bind(this.renderer)
-    });
-
-    this.poseController = new PoseController({
-      state: this.state,
-      renderer: this.renderer,
-      handleCalibration: this.handleCalibration.bind(this),
-      setTempo: this.setTempo.bind(this),
-      getBeatLength: this.audioPlayer.getBeatLength.bind(this.audioPlayer),
-      setInstrumentGroup: this.audioPlayer.setInstrumentGroup.bind(this.audioPlayer),
-      setVelocity: this.audioPlayer.setVelocity.bind(this.audioPlayer),
-      stop: this.stop.bind(this),
-      start: this.start.bind(this)
-    });
-
-    // 1) Deblochează AudioContext pe primul gest
-    const unlockAudio = async () => {
-      try {
-        if (Tone && Tone.context && Tone.context.state !== 'running') {
-          await Tone.context.resume();
-          if (Tone.Transport && Tone.Transport.state !== 'started') {
-            Tone.Transport.seconds = Tone.Transport.seconds; // no-op touch
-          }
-          console.log('[Semi-Conductor] AudioContext resumed.');
-        }
-      } catch (e) {
-        console.warn(
-          '[Semi-Conductor] AudioContext resume failed:',
-          (e && e.message) ? e.message : e
-        );
-      }
-    };
-    window.addEventListener('pointerdown', unlockAudio, { capture: true, once: false });
-    window.addEventListener('keydown', unlockAudio, { capture: true, once: false });
-
-    // 2) Cere permisiunea camerei devreme + la primul tap
-    this._preflightCamera();
-    window.addEventListener('pointerdown', () => this._preflightCamera(), { once: true });
-
-    // 3) Watchdog UI pentru load blocat
-    setTimeout(() => {
-      if (!this.state.loaded && this.state.percentageLoaded < 60) {
-        console.warn('[Semi-Conductor] Loading watchdog: pushing progress...');
-        this.setGraphicsLoaded();
-        this.setInstrumentsLoaded(80);
-      }
-    }, 5000);
-  }
-
-  async _preflightCamera() {
-    if (this._cameraPrefetched) return;
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      this._cameraPrefetched = true;
-      stream.getTracks().forEach(function (t) { t.stop(); });
-      console.log('[Semi-Conductor] Camera permission granted (preflight).');
-    } catch (err) {
-      console.warn(
-        '[Semi-Conductor] Camera preflight failed:',
-        (err && err.name) ? err.name : err
-      );
-    }
-  }
-
-  setInstrumentsLoaded(percentage) {
-    this.state.percentageLoaded = percentage;
-    this.setLoadProgress();
-  }
-
-  setGraphicsLoaded() {
-    this.state.graphicsLoaded = true;
-    this.setLoadProgress();
-  }
-
-  setLoadProgress() {
-    var percentage;
-    if (!this.state.graphicsLoaded) {
-      percentage = this.state.percentageLoaded - 20;
-    } else {
-      percentage = this.state.percentageLoaded;
-    }
-    this.renderer.renderLoadProgress(percentage);
-    if (percentage >= 100) {
-      this.state.loaded = true;
-      this.audioPlayer.queueSong();
-    }
-  }
-
-  setSongProgress(percentage) {
-    this.renderer.renderSongProgress(percentage);
-    if (percentage >= 99.9 && !this.state.finished) {
-      this.state.finished = true;
-      this.renderer.renderFinishPage();
-    }
-  }
-
-  setTempo(tempo) {
-    if (!(tempo > 0) || tempo === Infinity) return;
-    this.renderer.renderTempo(tempo);
-    this.audioPlayer.setTempo(tempo);
-  }
-
-  start() {
-    this.state.stopped = false;
-    this.audioPlayer.start();
-  }
-
-  stop() {
-    this.state.stopped = true;
-    this.audioPlayer.stop();
-  }
-
-  async startCalibration() {
-    await this._preflightCamera();
-    if (Tone && Tone.context && Tone.context.state !== 'running') {
-      try { await Tone.context.resume(); } catch (e) {}
-    }
-    if (!this.poseController.initialized) await this.poseController.initialize();
-  }
-
-  handleCalibration() {
-    this.renderer.renderCalibrationSuccess();
-    this.state.calibrating = false;
-
-    setTimeout(() => {
-      this.renderer.renderConductPage();
-      setTimeout(async () => {
-        await this.renderer.renderCountdown();
-        this.state.conducting = true;
-      }, 1000);
-    }, 2000);
-  }
-
-  restart() {
-    this.audioPlayer.restart();
-    this.state.calibrating = true;
-    this.state.stopped = false;
-    this.state.conducting = false;
-    this.state.finished = false;
-  }
+  });
 }
 
-const app = new App(config);
+async function loadPosenet() {
+  net = await posenet.load({
+    architecture: 'MobileNetV1',
+    outputStride: 16,
+    inputResolution: { width: 600, height: 500 },
+    multiplier: 0.75
+  });
+}
+
+async function detectPose() {
+  stats.begin();
+
+  const pose = await net.estimateSinglePose(video, {
+    flipHorizontal: true
+  });
+
+  dom.drawPose(pose, video);
+  orchestra.update(pose);
+
+  stats.end();
+  rafId = requestAnimationFrame(detectPose);
+}
+
+async function main() {
+  await setupCamera();
+  await loadPosenet();
+
+  video.play();
+
+  detectPose();
+
+  // Unlock AudioContext on user interaction
+  const unlockAudio = () => {
+    try {
+      if (orchestra.audioCtx && orchestra.audioCtx.state === 'suspended') {
+        orchestra.audioCtx.resume();
+      }
+    } catch (e) {
+      console.warn(
+        '[Semi-Conductor] AudioContext resume failed:',
+        (e && e.message) ? e.message : e
+      );
+    }
+  };
+  window.addEventListener('pointerdown', unlockAudio, { capture: true, once: false });
+}
+
+main();
+
+window.onbeforeunload = () => {
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+  }
+  if (video && video.srcObject) {
+    video.srcObject.getTracks().forEach(track => track.stop());
+  }
+};
