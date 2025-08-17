@@ -1,0 +1,4 @@
+{
+  "buildCommand": "yarn install --frozen-lockfile && yarn build",
+  "outputDirectory": "dist"
+}
