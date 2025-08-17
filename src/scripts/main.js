@@ -1,25 +1,9 @@
 /*
 Copyright 2019 Google LLC
-
-Licensed to the Apache Software Foundation (ASF) under one
-or more contributor license agreements.  See the NOTICE file
-distributed with this work for additional information
-regarding copyright ownership.  The ASF licenses this file
-to you under the Apache License, Version 2.0 (the
-"License"); you may not use this file except in compliance
-with the License.  You may obtain a copy of the License at
-
-  http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing,
-software distributed under the License is distributed on an
-"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-KIND, either express or implied.  See the License for the
-specific language governing permissions and limitations
-under the License.
+Licensed under the Apache License, Version 2.0
 */
 
-// Import this or horrible, inexplicable errors happen ¯\_(ツ)_/¯ -- https://github.com/parcel-bundler/parcel/issues/1762
+// Import this or horrible, inexplicable errors happen ¯\_(ツ)_/¯
 import 'babel-polyfill';
 
 // Import modules
@@ -44,7 +28,9 @@ class App {
       stopped: false,
       finished: false,
       graphicsLoaded: false
-    }
+    };
+
+    this._cameraPrefetched = false;
 
     this.renderer = new Renderer({
       state: this.state,
@@ -73,7 +59,33 @@ class App {
       stop: this.stop.bind(this),
       start: this.start.bind(this)
     });
+
+    // --- 👇 Nou: cerem permisiunea camerei cât mai devreme ---
+    // În unele browsere promptul cere "user gesture", așa că încercăm atât la load,
+    // cât și la primul click/tap.
+    this._preflightCamera(); // va funcționa pe majoritatea browserelor
+    window.addEventListener('pointerdown', () => this._preflightCamera(), { once: true });
   }
+
+  // ====== PRE-FLIGHT CAMERA ======
+  async _preflightCamera() {
+    if (this._cameraPrefetched) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+
+    try {
+      // Cerem camera. Dacă e acordată, închidem imediat stream-ul;
+      // când PoseController o va cere din nou, permisiunea e deja "granted".
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      this._cameraPrefetched = true;
+      stream.getTracks().forEach(t => t.stop());
+      // hint util în console pentru debug
+      console.log('[Semi-Conductor] Camera permission granted (preflight).');
+    } catch (err) {
+      // Dacă userul refuză, nu blocăm aplicația—PoseController va mai cere odată.
+      console.warn('[Semi-Conductor] Camera preflight failed:', err && err.name);
+    }
+  }
+  // =================================
 
   /* Called with percentage each time instrument samples loaded */
   setInstrumentsLoaded(percentage) {
@@ -87,8 +99,7 @@ class App {
     this.setLoadProgress();
   }
 
-  /* Combines load progress of both graphics & samples
-     to make sure app is fully loaded before starting */
+  /* Combines load progress of both graphics & samples to make sure app is fully loaded before starting */
   setLoadProgress() {
     let percentage;
     if (!this.state.graphicsLoaded) {
@@ -114,8 +125,7 @@ class App {
 
   /* Called when tempo measurement made in PoseController */
   setTempo(tempo) {
-    // Sanity check just in case.
-    if (!(tempo > 0) || tempo == Infinity) return;
+    if (!(tempo > 0) || tempo === Infinity) return;
     this.renderer.renderTempo(tempo);
     this.audioPlayer.setTempo(tempo);
   }
@@ -123,7 +133,7 @@ class App {
   /* Called when resuming motion in PoseController */
   start() {
     this.state.stopped = false;
-    this.audioPlayer.start()
+    this.audioPlayer.start();
   }
 
   /* Called when motion is stopped from PoseController */
@@ -134,6 +144,8 @@ class App {
 
   /* Called when user clicks start button in renderer.js */
   async startCalibration() {
+    // ne asigurăm încă o dată că permisiunea a fost cerută înainte de init
+    await this._preflightCamera();
     if (!this.poseController.initialized) await this.poseController.initialize();
   }
 
@@ -147,7 +159,7 @@ class App {
       setTimeout(async () => {
         await this.renderer.renderCountdown();
         this.state.conducting = true;
-      }, 1000)
+      }, 1000);
     }, 2000);
   }
 
