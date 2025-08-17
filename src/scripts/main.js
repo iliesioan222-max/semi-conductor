@@ -2,16 +2,15 @@
 Copyright 2019 Google LLC
 Licensed under the Apache License, Version 2.0
 */
-
-// Import this or horrible, inexplicable errors happen ¯\_(ツ)_/¯
 import 'babel-polyfill';
 
-// Import modules
 import Renderer from './renderer';
 import AudioPlayer from './audio-player';
 import PoseController from './pose-controller';
 
-// Import json files
+// 🔊 importăm Tone.js ca să putem debloca AudioContext
+import Tone from 'tone';
+
 import config from '../config.js';
 import song from '../assets/song.json';
 import samples from '../assets/samples.json';
@@ -60,32 +59,53 @@ class App {
       start: this.start.bind(this)
     });
 
-    // --- 👇 Nou: cerem permisiunea camerei cât mai devreme ---
-    // În unele browsere promptul cere "user gesture", așa că încercăm atât la load,
-    // cât și la primul click/tap.
-    this._preflightCamera(); // va funcționa pe majoritatea browserelor
+    // === 1) Deblochează AudioContext pe primul gest (click/tap) ===
+    const unlockAudio = async () => {
+      try {
+        if (Tone && Tone.context && Tone.context.state !== 'running') {
+          await Tone.context.resume();
+          // unele browsere vechi mai cer și un mic “ping”
+          if (Tone.Transport && Tone.Transport.state !== 'started') {
+            // nu pornim transportul, doar îl atingem
+            Tone.Transport.seconds = Tone.Transport.seconds; // no-op touch
+          }
+          console.log('[Semi-Conductor] AudioContext resumed.');
+        }
+      } catch (e) {
+        console.warn('[Semi-Conductor] AudioContext resume failed:', e?.message || e);
+      }
+    };
+    window.addEventListener('pointerdown', unlockAudio, { capture: true, once: false });
+    window.addEventListener('keydown', unlockAudio, { capture: true, once: false });
+
+    // === 2) Cere permisiunea camerei foarte devreme + la primul tap ===
+    this._preflightCamera();
     window.addEventListener('pointerdown', () => this._preflightCamera(), { once: true });
+
+    // === 3) Watchdog: dacă “loading” stă prea mult, împinge progresul ===
+    // (nu sare peste încărcarea reală; doar împinge UI-ul dacă s-a blocat din permisiuni)
+    setTimeout(() => {
+      if (!this.state.loaded && this.state.percentageLoaded < 60) {
+        console.warn('[Semi-Conductor] Loading watchdog: pushing progress...');
+        this.setGraphicsLoaded();          // ca și cum grafica ar fi gata
+        this.setInstrumentsLoaded(80);     // împingem un prag sigur
+      }
+    }, 5000);
   }
 
-  // ====== PRE-FLIGHT CAMERA ======
+  // ===== Camera preflight =====
   async _preflightCamera() {
     if (this._cameraPrefetched) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
-
     try {
-      // Cerem camera. Dacă e acordată, închidem imediat stream-ul;
-      // când PoseController o va cere din nou, permisiunea e deja "granted".
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       this._cameraPrefetched = true;
       stream.getTracks().forEach(t => t.stop());
-      // hint util în console pentru debug
       console.log('[Semi-Conductor] Camera permission granted (preflight).');
     } catch (err) {
-      // Dacă userul refuză, nu blocăm aplicația—PoseController va mai cere odată.
       console.warn('[Semi-Conductor] Camera preflight failed:', err && err.name);
     }
   }
-  // =================================
 
   /* Called with percentage each time instrument samples loaded */
   setInstrumentsLoaded(percentage) {
@@ -109,7 +129,7 @@ class App {
     }
 
     this.renderer.renderLoadProgress(percentage);
-    if (percentage === 100) {
+    if (percentage >= 100) {
       this.state.loaded = true;
       this.audioPlayer.queueSong();
     }
@@ -123,33 +143,31 @@ class App {
     }
   }
 
-  /* Called when tempo measurement made in PoseController */
   setTempo(tempo) {
     if (!(tempo > 0) || tempo === Infinity) return;
     this.renderer.renderTempo(tempo);
     this.audioPlayer.setTempo(tempo);
   }
 
-  /* Called when resuming motion in PoseController */
   start() {
     this.state.stopped = false;
     this.audioPlayer.start();
   }
 
-  /* Called when motion is stopped from PoseController */
   stop() {
     this.state.stopped = true;
     this.audioPlayer.stop();
   }
 
-  /* Called when user clicks start button in renderer.js */
   async startCalibration() {
-    // ne asigurăm încă o dată că permisiunea a fost cerută înainte de init
     await this._preflightCamera();
+    // asigură-te că audio e “running” când userul apasă Start
+    if (Tone && Tone.context && Tone.context.state !== 'running') {
+      try { await Tone.context.resume(); } catch (_) {}
+    }
     if (!this.poseController.initialized) await this.poseController.initialize();
   }
 
-  /* Called when calibration pose detected, handles transition to conducting */
   handleCalibration() {
     this.renderer.renderCalibrationSuccess();
     this.state.calibrating = false;
@@ -163,7 +181,6 @@ class App {
     }, 2000);
   }
 
-  /* When the user clicks to restart the experience */
   restart() {
     this.audioPlayer.restart();
     this.state.calibrating = true;
