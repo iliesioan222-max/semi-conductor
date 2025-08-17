@@ -7,10 +7,11 @@
   "license": "MIT",
   "scripts": {
     "start": "parcel src/index.html --out-dir build/",
+    "build-fetch": "rm -rf static/samples && mkdir -p static && git clone --depth 1 https://github.com/googlecreativelab/semi-conductor.git _up && mkdir -p static/samples && cp -R _up/static/samples/* static/samples/ && rm -rf _up",
     "build-start": "mv src/config.js src/config.build.js && mv src/config.prod.js src/config.js",
     "build-parcel": "parcel build src/index.html --out-dir dist/static/ --public-url /static/",
     "build-finish": "mv dist/static/index.html dist/ && cp src/app.yaml dist/ && mv src/config.js src/config.prod.js && mv src/config.build.js src/config.js",
-    "build": "rm -rf dist/ && yarn run build-start && yarn run build-parcel && yarn run build-finish"
+    "build": "rm -rf dist/ && yarn run build-fetch && yarn run build-start && yarn run build-parcel && yarn run build-finish"
   },
   "devDependencies": {
     "babel-core": "^6.26.3",
@@ -28,5 +29,8 @@
     "json5": "2.1.0",
     "pixi.js": "4.8.2",
     "tone": "13.3.11"
-  }
+  },
+  "staticFiles": [
+    { "staticPath": "static", "staticOutDir": "static" }
+  ]
 }
