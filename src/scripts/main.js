@@ -7,8 +7,6 @@ import 'babel-polyfill';
 import Renderer from './renderer';
 import AudioPlayer from './audio-player';
 import PoseController from './pose-controller';
-
-// Import Tone.js ca să putem debloca AudioContext
 import Tone from 'tone';
 
 import config from '../config.js';
@@ -59,15 +57,13 @@ class App {
       start: this.start.bind(this)
     });
 
-    // === 1) Deblochează AudioContext pe primul gest (click/tap/keypress) ===
+    // 1) Deblochează AudioContext pe primul gest
     const unlockAudio = async () => {
       try {
         if (Tone && Tone.context && Tone.context.state !== 'running') {
           await Tone.context.resume();
-          // atinge ușor transportul pe unele browsere vechi
           if (Tone.Transport && Tone.Transport.state !== 'started') {
-            // no-op touch
-            Tone.Transport.seconds = Tone.Transport.seconds;
+            Tone.Transport.seconds = Tone.Transport.seconds; // no-op touch
           }
           console.log('[Semi-Conductor] AudioContext resumed.');
         }
@@ -81,28 +77,26 @@ class App {
     window.addEventListener('pointerdown', unlockAudio, { capture: true, once: false });
     window.addEventListener('keydown', unlockAudio, { capture: true, once: false });
 
-    // === 2) Cere permisiunea camerei foarte devreme + la primul tap ===
+    // 2) Cere permisiunea camerei devreme + la primul tap
     this._preflightCamera();
     window.addEventListener('pointerdown', () => this._preflightCamera(), { once: true });
 
-    // === 3) Watchdog: dacă “loading” stă prea mult, împinge progresul UI ===
+    // 3) Watchdog UI pentru load blocat
     setTimeout(() => {
       if (!this.state.loaded && this.state.percentageLoaded < 60) {
         console.warn('[Semi-Conductor] Loading watchdog: pushing progress...');
-        this.setGraphicsLoaded();      // marchează grafica drept “gata”
-        this.setInstrumentsLoaded(80); // și instrumentele la un prag sigur
+        this.setGraphicsLoaded();
+        this.setInstrumentsLoaded(80);
       }
     }, 5000);
   }
 
-  // ===== Camera preflight =====
   async _preflightCamera() {
     if (this._cameraPrefetched) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
       this._cameraPrefetched = true;
-      // oprim imediat — doar voiam permisiunea
       stream.getTracks().forEach(function (t) { t.stop(); });
       console.log('[Semi-Conductor] Camera permission granted (preflight).');
     } catch (err) {
@@ -113,7 +107,6 @@ class App {
     }
   }
 
-  // ===== Progres încărcare =====
   setInstrumentsLoaded(percentage) {
     this.state.percentageLoaded = percentage;
     this.setLoadProgress();
@@ -131,7 +124,6 @@ class App {
     } else {
       percentage = this.state.percentageLoaded;
     }
-
     this.renderer.renderLoadProgress(percentage);
     if (percentage >= 100) {
       this.state.loaded = true;
@@ -164,7 +156,6 @@ class App {
   }
 
   async startCalibration() {
-    // asigură camera + audio unlock înainte de init
     await this._preflightCamera();
     if (Tone && Tone.context && Tone.context.state !== 'running') {
       try { await Tone.context.resume(); } catch (e) {}
